@@ -2,11 +2,29 @@
 SYCLproject. Learning how to write and optimize the sycl code.
 
 
-# 编译命令为
+
+运行示例
+
+ ./test_mkl_dpcpp 1.txt
+ 5 5
+Time interval : 1.85923 s
+Total dot time        : 0.460202s
+Total nrm2 time       : 0.156654s
+Total updateXnew time : 0.395826s
+Total update_rew time : 0.231144s
+Total updateOld time  : 0.33895s
+Total memcpy1 time    : 0.107572s
+Total memcpy2 time    : 0.156954s
+Avg dot time          : 0.000011s, 40040 calls
+Avg dot submit time   : 0.000006s, 40040 calls
+Avg nrm2 time         : 0.000016s, 10010 calls
+Avg updateXnew time   : 0.000040s, 10010 calls
+Avg update_rew time   : 0.000023s, 10010 calls
+Avg updateOld time    : 0.000034s, 10010 calls
+Avg memcpy1 time      : 0.000011s, 10010 calls
+Avg memcpy2 time      : 0.000016s, 10010 calls
+
+Printing Result:
+3701.77853618   -1147.28902069  4218.15361148   2674.87496941   5088.62588762   3701.77853618 -1147.28902069   4218.15361148   2674.87496941   5088.62588762
+
  
-##CUDA
-
-'''nvcc admmsolver.cu  cnic_sparsematrix.cu -lcusparse -lcublas'''
-
-##sycl
-'''dpcpp admmsolver.dp.cpp cnic_sparsematrix.dp.cpp cnicsparsematrix.cpp -lmkl_sycl -lmkl_intel_ilp64 -lmkl_tbb_thread -lmkl_core -lsycl -lOpenCL -lpthread -lm -ldl   -fsycl -DMKL_ILP64 -qmkl=parallel -DPSTL_USE_PARALLEL_POLICIES=0'''
