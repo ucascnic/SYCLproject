@@ -164,6 +164,72 @@ struct COORowPtrl{
    std::vector<ptrdiff_t> ptr;
 };
 
+
+class COOMatrix
+{
+public:
+    COOMatrix(){};
+    COOMatrix(int m, int n,int n_ele);
+    
+
+    void read_fromfile(std::string& f);
+
+
+    void to_GPU();
+    void print_matrix();
+    int n_element;
+    int n_rows;
+    int n_cols;
+
+
+public:
+    std::vector<double> data;
+    std::vector<int> row;
+    std::vector<int> col;
+#if BUILD_FOR_MKL
+    dpct::device_vector<double> cudata;
+    dpct::device_vector<int> curow;
+    dpct::device_vector<int> cucol;
+#else
+    thrust::device_vector<double> cudata;
+    thrust::device_vector<int> curow;
+    thrust::device_vector<int> cucol;
+
+#endif 
+};
+#if BUILD_FOR_MKL
+
+#else
+#include<fstream>
+#endif 
+void COOMatrix::read_fromfile(std::string &f){
+
+
+     
+        std::ifstream file(f);
+        int m, n, n_ele;
+        file >> m >> n >> n_ele;
+        data.resize(n_ele);
+        row.resize(n_ele);
+        col.resize(n_ele);
+        for (int i = 0; i < n_ele; i++) {
+            file >> row[i] >> col[i] >> data[i];
+        }
+        file.close();
+
+    this->n_rows = m;
+    this->n_cols = n;
+    this->n_element = n_ele;
+    this->cudata = this->data;
+    this->curow = this->row;
+    this->cucol = this->col;       
+   
+// 
+}
+
+
+
+
 template <typename T>
 void show_res_T(T *s,int n){
     T *res = (T *)malloc(n*sizeof(T));
@@ -197,12 +263,121 @@ public:
     thrust::device_vector<int> cucol;
 #endif
 
+    void create_matrix_from_coo(COOMatrix * coo_matrix);
 
     int  n_element;
     int n_rows;
     int n_cols;
 
 };
+
+
+static int cmp_pair(ptrdiff_t M1, ptrdiff_t N1, ptrdiff_t M2, ptrdiff_t N2)
+{
+    if (M1 == M2) return (N1 < N2);
+    else return (M1 < M2);
+}
+
+template <typename T>
+void qsortCOO2CSR(ptrdiff_t *row, ptrdiff_t *col, T *val, ptrdiff_t l, ptrdiff_t r)
+{
+    ptrdiff_t i = l, j = r, row_tmp, col_tmp;
+    ptrdiff_t mid_row = row[(l + r) / 2];
+    ptrdiff_t mid_col = col[(l + r) / 2];
+    double val_tmp;
+    while (i <= j)
+    {
+        while (cmp_pair(row[i], col[i], mid_row, mid_col)) i++;
+        while (cmp_pair(mid_row, mid_col, row[j], col[j])) j--;
+        if (i <= j)
+        {
+            row_tmp = row[i]; row[i] = row[j]; row[j] = row_tmp;
+            col_tmp = col[i]; col[i] = col[j]; col[j] = col_tmp;
+            val_tmp = val[i]; val[i] = val[j]; val[j] = val_tmp;
+
+            i++;  j--;
+        }
+    }
+    if (i < r) qsortCOO2CSR<T>(row, col, val, i, r);
+    if (j > l) qsortCOO2CSR<T>(row, col, val, l, j);
+}
+
+void compressIndices(ptrdiff_t *idx, ptrdiff_t *idx_ptr, ptrdiff_t nindex, ptrdiff_t nelem)
+{
+    int curr_pos = 0, end_pos;
+    idx_ptr[0] = 0;
+    for (ptrdiff_t index = 0; index < nindex; index++)
+    {
+        for (end_pos = curr_pos; end_pos < nelem; end_pos++)
+            if (idx[end_pos] > index) break;
+        idx_ptr[index + 1] = end_pos;
+        curr_pos = end_pos;
+    }
+    idx_ptr[nindex] = nelem;
+}
+
+
+void CSRMatrix::create_matrix_from_coo(COOMatrix * coo_matrix){
+
+    int n = coo_matrix->n_element;
+    this->cudata = coo_matrix->cudata;
+    this->cucol = coo_matrix->cucol;
+    
+
+    COORowPtrl coorowptrl;
+    coorowptrl.ptr.resize(n);
+    for (int i =0;i<n;++i){
+        coorowptrl.ptr[i] = coo_matrix->row[i];
+    }
+
+
+    CSRIntMatrix  csr;
+    csr.col.resize(this->cucol.size());
+    csr.ptr.resize(coo_matrix->n_rows+1);
+    for (int i = 0 ;i < this->cucol.size();++i){
+        csr.col[i]=coo_matrix->col[i];
+    }
+
+
+    ptrdiff_t nnz = n;
+    csr.val.resize(nnz);
+    for (int i = 0 ; i < nnz;++i){
+        csr.val[i] = i;
+    }
+
+
+    qsortCOO2CSR<int>(coorowptrl.ptr.data(), csr.col.data(), csr.val.data(), 0, nnz - 1);
+
+    compressIndices(coorowptrl.ptr.data(), csr.ptr.data(), coo_matrix->n_rows, nnz);
+
+    std::vector<int> temp1(csr.ptr.size());
+
+    for (int i = 0 ; i< csr.ptr.size();++i){
+        temp1[i] = csr.ptr[i];
+
+    }
+
+    this->csr_row_ptrl = temp1;
+
+    std::vector<int> temp2(csr.col.size());
+    for (int i = 0 ; i< csr.col.size();++i){
+        temp2[i] = csr.col[i];
+    }
+    this->cucol = temp2;
+
+    std::vector<double> temp3 = coo_matrix->data;
+    std::vector<double> temp4 = coo_matrix->data;
+    for (int i = 0 ; i< temp3.size();++i){
+        temp4[i] = temp3[csr.val[i]];
+    }
+    this->cudata = temp4;
+
+    return   ;
+
+}
+
+
+
 
 CSRMatrix::CSRMatrix(int size,int rows,int cols){
     this->n_element = size;
@@ -336,6 +511,7 @@ void Conjugate_gradient_sp_mod(cublasHandle_t &handle,CSRMatrix *A,double *b, do
 #if BUILD_FOR_MKL
     double *bNorm = sycl::malloc_device<double>(1, dpct::get_default_queue());
     oneapi::mkl::blas::column_major::nrm2(*handle, n, b, 1, bNorm).wait(); //bNorm;
+
 #else
     double bNorm = 0.0;
     cublasDnrm2(handle,n,b,1,&bNorm); //bNorm;
@@ -548,7 +724,9 @@ void Conjugate_gradient_sp_mod(cublasHandle_t &handle,CSRMatrix *A,double *b, do
 
 }
 
-int main () {
+
+
+int main (int , char **argv) {
     srand(0);
 #if BUILD_FOR_MKL
     sycl::queue *handle;
@@ -558,14 +736,21 @@ int main () {
     cublasCreate(&handle);
 #endif
 
-    //COOMatrix   AAA_coo(4, 4, 16);
-    //CSRMatrix   AAA_cu( AAA_coo.n_element,AAA_coo.n_rows,AAA_coo.n_cols);
-    //AAA_cu.create_matrix_from_coo(&AAA_coo);
+    int i  = 1;
 
-    CSRMatrix   AAA_cu( 16,4,4);
+    COOMatrix A = COOMatrix();
+    
+    std::string f =  std::string(argv[1]);
+    A.read_fromfile(f);
+    std::cout <<  " " << A.n_cols << " " << A.n_rows << std::endl;
+
+    COOMatrix &AAA = A;
+    int equation_size = AAA.n_cols;
+    CSRMatrix   AAA_cu( AAA.n_element,AAA.n_rows,AAA.n_cols);
+    AAA_cu.create_matrix_from_coo(&AAA);
+
 
     Resources<double>  resources(1<<23);
-    int equation_size = 1024;//By Auber bbsize+beqy.n_elem;
     double * bbb = resources.allocate_resource(equation_size);
     double * yy = resources.allocate_resource(equation_size);
     double * buff = resources.allocate_resource(8*equation_size);
